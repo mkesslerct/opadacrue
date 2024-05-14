@@ -7,6 +7,8 @@ import os
 
 
 def crear_tabla_pattern(nombre_hoja):
+    """Devuelve un patrón que permite extraer el nombre de la tabla a partir del nombre de la hoja.
+    Si tiene más digitos el nombre de la hoja, el patrón tiene que tenerlo en cuenta."""
     # Define the regular expression pattern
     pattern = r"hoja-\d+\.[IVXLCDM]+\.((?:\d+\.)*\d+)"
     # Find the part of the string after the Roman numeral
@@ -60,25 +62,32 @@ def extraer_tablas(hoja_path, definiciones_file, tabla_pattern):
     with open(hoja_path, "r") as hoja:
         lineas = [re.sub("\\n$", "", linea) for linea in hoja.readlines()]
         tablas = pd.DataFrame(
-            columns=["tabla", "inicio", "descripcion", "definicion", "tipo_dato"]
+            columns=[
+                "tabla",
+                "inicio",
+                "descripcion",
+                "definicion",
+            ]
         )
+        # identifica las lineas que contienen el nombre de la tabla.
+        # la linea siguiente contiene la definición
+        # guardamos también el número de línea que empieza
         for nr, linea in enumerate(lineas):
             if match_object := tabla_pattern.match(linea):
                 nombre_tabla = match_object.groupdict()["tabla"]
                 tabla_desc = linea.split(" - ")[1].replace("|", "")
                 definicion = lineas[nr + 1].replace("|", "")
-                tipo_dato = re.match(r"\|Tipo de dato", lineas[nr + 2]) is not None
                 tablas.loc[len(tablas)] = [
                     nombre_tabla,
                     nr,
                     tabla_desc,
                     definicion,
-                    tipo_dato,
                 ]
                 definiciones_file.write(
                     "|".join([nombre_tabla, tabla_desc, definicion]) + "\n"
                 )
 
+        # la linea de fin de la tabla, es cuando empieza la siguiente, menos cuando es la última.
         tablas["fin"] = (
             tablas["inicio"].shift(-1, fill_value=(len(lineas) + 1)).astype(int)
         )
@@ -88,6 +97,7 @@ def extraer_tablas(hoja_path, definiciones_file, tabla_pattern):
             tabla_df = pd.DataFrame(split_data)
             tabla_df.replace("", np.nan, inplace=True)
             tabla_df.dropna(axis=0, how="all", inplace=True)
+            ## Ponemos nombres para las columnas, que serán las de la columna con los años.
             s = tabla_df.iloc[:, 0]
             first_year_index = s[s == LISTA_ANYOS[0]].index[0]
             labels = [f"V{i+1}" for i in range(first_year_index)]
@@ -108,7 +118,6 @@ if __name__ == "__main__":
     ## ----- aquí configurar para anio --------
     ANYO = "2023"
     # El encoding de los ficheros que pasa Mari Carmen
-    ENCODING = "latin-1"
     ENCODING = "windows-1252"
 
     # especificamos el triplete de años para limpiar filas vacias, que no
