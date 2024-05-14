@@ -1,10 +1,28 @@
 import pandas as pd
+import numpy as np
+from io import StringIO
 import pathlib
 import re
 import os
 
 
-tabla_pattern = re.compile("(?P<tabla>1\.[IV]+\.[0-9]+\.[0-9]+)")
+def crear_tabla_pattern(nombre_hoja):
+    # Define the regular expression pattern
+    pattern = r"hoja-\d+\.[IVXLCDM]+\.((?:\d+\.)*\d+)"
+    # Find the part of the string after the Roman numeral
+    match = re.match(pattern, nombre_hoja)
+    if match:
+        # Extract the part of the string after the Roman numeral
+        numbers_part = match.group(1)
+        # Split the part by dots and count the numbers
+        numbers = numbers_part.split(".")
+        l_numeros = len(numbers)
+    else:
+        l_numeros = 0
+    tabla_pattern = re.compile(
+        "(?P<tabla>1\.[IV]+" + r"\.[0-9]+" * (l_numeros + 1) + ")"
+    )
+    return tabla_pattern
 
 
 def unir_lineas(hoja_path):
@@ -38,72 +56,51 @@ def unir_lineas(hoja_path):
     return hoja_retocada_path
 
 
-def extraer_tablas(hoja_path, definiciones_file):
+def extraer_tablas(hoja_path, definiciones_file, tabla_pattern):
     with open(hoja_path, "r") as hoja:
-        nr_nivel = 1000000000
-        tabla_in = False
-
-        for nr, linea in enumerate(hoja):
-            campos = re.sub("\\n$", "", linea).split("|")
-
+        lineas = [re.sub("\\n$", "", linea) for linea in hoja.readlines()]
+        tablas = pd.DataFrame(
+            columns=["tabla", "inicio", "descripcion", "definicion", "tipo_dato"]
+        )
+        for nr, linea in enumerate(lineas):
             if match_object := tabla_pattern.match(linea):
                 nombre_tabla = match_object.groupdict()["tabla"]
-                tabla_desc = campos[0]
-
-            if campos[0] == "Provisión:":
-                definicion = campos[5]
-
+                tabla_desc = linea.split(" - ")[1].replace("|", "")
+                definicion = lineas[nr + 1].replace("|", "")
+                tipo_dato = re.match(r"\|Tipo de dato", lineas[nr + 2]) is not None
+                tablas.loc[len(tablas)] = [
+                    nombre_tabla,
+                    nr,
+                    tabla_desc,
+                    definicion,
+                    tipo_dato,
+                ]
                 definiciones_file.write(
                     "|".join([nombre_tabla, tabla_desc, definicion]) + "\n"
                 )
 
-            if campos[0] == "Nivel:":
-                nr_nivel = nr
-
-            if nr == (nr_nivel + 4):
-                tabla_in = True
-                n_lineas = 0
-                tabla_list = []
-
-            if (nr >= (nr_nivel + 4)) & tabla_in:
-
-                n_lineas += 1
-
-                if re.match("20[1-2][0-9]", campos[0]) is None:
-                    n_columnas = 1
-                    if campos[0] == "":
-                        campos[0] = f"Var{n_lineas}"
-
-                    for j, campo in enumerate(campos[1:]):
-                        if campo != "":
-                            current = campo
-                        else:
-                            campos[j + 1] = current
-
-                tabla_list.append(campos)
-
-                ## si estamos en 2021, consideramos que hemos acabado la tabla
-                ## eso hay que cambiarlo todos los años
-                if campos[0] == ANYO:
-                    tabla_in = False
-
-                    transposed_tuples = list(zip(*tabla_list))
-                    tlineas = [list(sublist) for sublist in transposed_tuples]
-
-                    with open(
-                        TABLAS_DIRECTORY / f"tabla-{nombre_tabla}.csv", "w"
-                    ) as tabla_file:
-                        for tlinea in tlineas:
-                            tabla_file.write("|".join(tlinea) + "\n")
-
-                    print(f"Tabla extraida: {nombre_tabla}")
-
-
-def limpiar_tabla(tabla_path, years_list):
-    """quita filas vacias para los años de years_list"""
-    tabla = pd.read_csv(tabla_path, delimiter="|")
-    tabla.dropna(subset=years_list, how="all", inplace=True)
-    tabla.to_csv(TABLAS_DIRECTORY / tabla_path.name, index=False, sep="|")
+        tablas["fin"] = (
+            tablas["inicio"].shift(-1, fill_value=(len(lineas) + 1)).astype(int)
+        )
+        for i in range(len(tablas)):
+            data_string = lineas[(tablas["inicio"][i] + 3) : tablas["fin"][i]]
+            split_data = [row.split("|") for row in data_string]
+            tabla_df = pd.DataFrame(split_data)
+            tabla_df.replace("", np.nan, inplace=True)
+            tabla_df.dropna(axis=0, how="all", inplace=True)
+            s = tabla_df.iloc[:, 0]
+            first_year_index = s[s == LISTA_ANYOS[0]].index[0]
+            labels = [f"V{i+1}" for i in range(first_year_index)]
+            # Replace elements up to and including "edicion" with the labels
+            tabla_df.iloc[:first_year_index, 0] = labels
+            tabla_df.set_index(0, inplace=True)
+            print(tablas["tabla"][i])
+            tabla_df = tabla_df.T
+            tabla_df.dropna(axis=0, how="all", inplace=True)
+            print(tabla_df)
+            tabla_df.to_csv(
+                TABLAS_DIRECTORY / f"tabla-{tablas['tabla'][i]}.csv", index=False
+            )
 
 
 if __name__ == "__main__":
@@ -112,6 +109,7 @@ if __name__ == "__main__":
     ANYO = "2023"
     # El encoding de los ficheros que pasa Mari Carmen
     ENCODING = "latin-1"
+    ENCODING = "windows-1252"
 
     # especificamos el triplete de años para limpiar filas vacias, que no
     # datos en ninguno de estos tres años.
@@ -135,11 +133,7 @@ if __name__ == "__main__":
     with open(TABLAS_DIRECTORY / "definiciones-tablas.csv", "w") as definiciones_file:
         for hoja_path in CSV_DIRECTORY.glob("hoja*.csv"):
             print(f"hoja: {hoja_path}")
-
             hoja_retocada_path = unir_lineas(hoja_path)
-
-            extraer_tablas(hoja_retocada_path, definiciones_file)
-
-    for tabla_path in TABLAS_DIRECTORY.glob("tabla*.csv"):
-        print(f"Limpiando tabla: {tabla_path}")
-        limpiar_tabla(tabla_path, LISTA_ANYOS)
+            print(hoja_path.name)
+            tabla_pattern = crear_tabla_pattern(hoja_retocada_path.name)
+            extraer_tablas(hoja_retocada_path, definiciones_file, tabla_pattern)
