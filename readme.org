@@ -1,0 +1,3 @@
+* Año 2024 para curso 2023
+Ha cambiado la estructura de los ficheros que pasa Mari Carmen, por lo que no funciona el script. Ya no hay "provisión", y varias diferencias más.
+Vuelvo a hacer el script, cambiado extraer_tablas. Uso que la estructura es siempre la misma: las tablas se sigue, tiene primero el título, línea siguiente la descripción, luego quito la línea de tipo de datos, y empieza la tabla que sigue hasta que empiece la siguiente.
